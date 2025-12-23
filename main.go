@@ -70,6 +70,52 @@ func queryDNS(r *dns.Msg, server string) (*dns.Msg, error) {
 	return c.Exchange(r, server)
 }
 
+// Query DNS with EDNS Client Subnet
+func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg, error) {
+	c := &dns.Client{
+		Net: "udp",
+	}
+
+	// Create a copy to avoid modifying the original request
+	req := r.Copy()
+
+	// Parse the client subnet IP
+	ip := net.ParseIP(clientSubnet)
+	if ip == nil {
+		return nil, dns.ErrId
+	}
+
+	// Determine subnet size based on IP type
+	var family uint16
+	var sourceNetmask uint8
+	if ip.To4() != nil {
+		family = 1 // IPv4
+		sourceNetmask = 32
+	} else {
+		family = 2 // IPv6
+		sourceNetmask = 128
+	}
+
+	// Create EDNS0 subnet option
+	opt := &dns.OPT{
+		Hdr: dns.RR_Header{
+			Name:   ".",
+			Rrtype: dns.TypeOPT,
+		},
+	}
+	e := &dns.EDNS0_SUBNET{
+		Code:          dns.EDNS0SUBNET,
+		Family:        family,
+		SourceNetmask: sourceNetmask,
+		SourceScope:   0,
+		Address:       ip,
+	}
+	opt.Option = append(opt.Option, e)
+	req.Extra = append(req.Extra, opt)
+
+	return c.Exchange(req, server)
+}
+
 func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	primaryDNS := "119.29.29.29:53"
 	fallbackDNS := "1.1.1.1:53"
