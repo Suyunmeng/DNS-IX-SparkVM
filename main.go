@@ -122,7 +122,8 @@ func queryDNS(r *dns.Msg, server string) (*dns.Msg, error) {
 	c := &dns.Client{
 		Net: "udp",
 	}
-	return c.Exchange(r, server)
+	resp, _, err := c.Exchange(r, server)
+	return resp, err
 }
 
 // Query DNS with EDNS Client Subnet
@@ -168,7 +169,8 @@ func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg,
 	opt.Option = append(opt.Option, e)
 	req.Extra = append(req.Extra, opt)
 
-	return c.Exchange(req, server)
+	resp, _, err := c.Exchange(req, server)
+	return resp, err
 }
 
 // Get minimum TTL from DNS response
