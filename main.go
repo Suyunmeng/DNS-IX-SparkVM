@@ -171,16 +171,59 @@ func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg,
 	return c.Exchange(req, server)
 }
 
+// Get minimum TTL from DNS response
+func getMinTTL(resp *dns.Msg) uint32 {
+	if resp == nil || len(resp.Answer) == 0 {
+		return 300 // Default 5 minutes
+	}
+
+	minTTL := uint32(3600) // Max 1 hour
+	for _, ans := range resp.Answer {
+		if ans.Header().Ttl < minTTL {
+			minTTL = ans.Header().Ttl
+		}
+	}
+
+	// Ensure minimum TTL of 60 seconds
+	if minTTL < 60 {
+		minTTL = 60
+	}
+	return minTTL
+}
+
+// Generate cache key from DNS question
+func getCacheKey(r *dns.Msg) string {
+	if len(r.Question) == 0 {
+		return ""
+	}
+	q := r.Question[0]
+	return q.Name + ":" + dns.TypeToString[q.Qtype]
+}
+
 func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	primaryDNS := "119.29.29.29:53"
 	fallbackDNS := "1.1.1.1:53"
 	ednsClientSubnet := "183.61.225.70"
+
+	// Check cache first
+	cacheKey := getCacheKey(r)
+	if cacheKey != "" {
+		if cachedResp, found := cache.Get(cacheKey); found {
+			log.Printf("Cache hit for %s", cacheKey)
+			cachedResp.Id = r.Id // Update message ID to match request
+			w.WriteMsg(cachedResp)
+			return
+		}
+	}
 
 	// Query primary DNS first
 	resp, err := queryDNS(r, primaryDNS)
 	if err != nil {
 		log.Printf("primary DNS failed: %v, fallback to %s\n", err, fallbackDNS)
 		resp, _ = queryDNS(r, fallbackDNS)
+		if resp != nil && cacheKey != "" {
+			cache.Set(cacheKey, resp, getMinTTL(resp))
+		}
 		w.WriteMsg(resp)
 		return
 	}
@@ -237,18 +280,27 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 						filteredResp.Answer = append(filteredResp.Answer, ans)
 					}
 				}
+				if cacheKey != "" {
+					cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
+				}
 				w.WriteMsg(filteredResp)
 				return
 			}
 			// IPv6 in cn-ipv6.list but not in cn-ipv6-isp.list
 			// Return full response (IPv4+IPv6)
 			log.Printf("IPv6 in CN list but not ISP list, returning full response")
+			if cacheKey != "" {
+				cache.Set(cacheKey, resp, getMinTTL(resp))
+			}
 			w.WriteMsg(resp)
 			return
 		}
 		// IPv6 not in cn-ipv6.list, fallback to 1.1.1.1
 		log.Printf("IPv6 not in CN list, fallback to %s", fallbackDNS)
 		resp, _ = queryDNS(r, fallbackDNS)
+		if resp != nil && cacheKey != "" {
+			cache.Set(cacheKey, resp, getMinTTL(resp))
+		}
 		w.WriteMsg(resp)
 		return
 	}
@@ -260,18 +312,27 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				// IPv4 in both lists, fallback to 1.1.1.1
 				log.Printf("IPv4 in both CN and ISP lists, fallback to %s", fallbackDNS)
 				resp, _ = queryDNS(r, fallbackDNS)
+				if resp != nil && cacheKey != "" {
+					cache.Set(cacheKey, resp, getMinTTL(resp))
+				}
 				w.WriteMsg(resp)
 				return
 			}
 			// IPv4 in cn-ipv4.list but not in cn-ipv4-isp.list
 			// Return original response
 			log.Printf("IPv4 in CN list but not ISP list, returning original response")
+			if cacheKey != "" {
+				cache.Set(cacheKey, resp, getMinTTL(resp))
+			}
 			w.WriteMsg(resp)
 			return
 		}
 	}
 
 	// Default: return original response
+	if cacheKey != "" {
+		cache.Set(cacheKey, resp, getMinTTL(resp))
+	}
 	w.WriteMsg(resp)
 }
 
