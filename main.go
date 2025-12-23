@@ -119,7 +119,8 @@ func isInIPNets(ip net.IP, nets []*net.IPNet) bool {
 // 查询上游 DNS
 func queryDNS(r *dns.Msg, server string) (*dns.Msg, error) {
 	c := &dns.Client{
-		Net: "udp",
+		Net:     "udp",
+		Timeout: 3 * time.Second,
 	}
 	resp, _, err := c.Exchange(r, server)
 	return resp, err
@@ -128,7 +129,8 @@ func queryDNS(r *dns.Msg, server string) (*dns.Msg, error) {
 // Query DNS with EDNS Client Subnet
 func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg, error) {
 	c := &dns.Client{
-		Net: "udp",
+		Net:     "udp",
+		Timeout: 5 * time.Second,
 	}
 
 	// Create a copy to avoid modifying the original request
@@ -156,6 +158,7 @@ func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg,
 		Hdr: dns.RR_Header{
 			Name:   ".",
 			Rrtype: dns.TypeOPT,
+			Class:  4096, // UDP payload size
 		},
 	}
 	e := &dns.EDNS0_SUBNET{
@@ -168,8 +171,20 @@ func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg,
 	opt.Option = append(opt.Option, e)
 	req.Extra = append(req.Extra, opt)
 
-	resp, _, err := c.Exchange(req, server)
-	return resp, err
+	// Retry mechanism: try up to 3 times
+	var resp *dns.Msg
+	var err error
+	for i := 0; i < 3; i++ {
+		resp, _, err = c.Exchange(req, server)
+		if err == nil {
+			return resp, nil
+		}
+		if i < 2 {
+			log.Printf("EDNS query attempt %d failed: %v, retrying...", i+1, err)
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	return nil, err
 }
 
 // Get minimum TTL from DNS response
