@@ -42,11 +42,16 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
+          go mod download
           go build -ldflags="-s -w" -trimpath -o ix-sparkvm-dns .
           
       - name: Package binary
         run: |
-          tar czf ix-sparkvm-dns-${{ matrix.name }}.tar.gz ix-sparkvm-dns
+          mkdir -p package
+          cp ix-sparkvm-dns package/
+          cp cn-ipv4.list cn-ipv4-isp.list cn-ipv6.list cn-ipv6-isp.list package/
+          cd package
+          tar czf ../ix-sparkvm-dns-${{ matrix.name }}.tar.gz *
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
