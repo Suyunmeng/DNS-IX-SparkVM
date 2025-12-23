@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
 
 var (
@@ -15,6 +17,67 @@ var (
 	cnIPv4Nets    []*net.IPNet
 	cnIPv4ISPNets []*net.IPNet
 )
+
+// DNS cache entry with expiration
+type cacheEntry struct {
+	response  *dns.Msg
+	expiresAt time.Time
+}
+
+// DNS response cache with concurrent access support
+type dnsCache struct {
+	mu      sync.RWMutex
+	entries map[string]*cacheEntry
+}
+
+func newDNSCache() *dnsCache {
+	return &dnsCache{
+		entries: make(map[string]*cacheEntry),
+	}
+}
+
+// Get cached response if not expired
+func (c *dnsCache) Get(key string) (*dns.Msg, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	entry, exists := c.entries[key]
+	if !exists {
+		return nil, false
+	}
+
+	if time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+
+	return entry.response.Copy(), true
+}
+
+// Set cache entry with TTL
+func (c *dnsCache) Set(key string, resp *dns.Msg, ttl uint32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.entries[key] = &cacheEntry{
+		response:  resp.Copy(),
+		expiresAt: time.Now().Add(time.Duration(ttl) * time.Second),
+	}
+}
+
+// Clean expired entries
+func (c *dnsCache) CleanExpired() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	for key, entry := range c.entries {
+		if now.After(entry.expiresAt) {
+			delete(c.entries, key)
+		}
+	}
+}
+
+var cache = newDNSCache()
 
 // Load IP list from file (generic loader for both IPv4 and IPv6)
 func loadIPList(path string) ([]*net.IPNet, error) {
@@ -230,6 +293,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load cn-ipv4-isp.list: %v", err)
 	}
+
+	// Start cache cleanup goroutine
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			cache.CleanExpired()
+			log.Println("Cache cleanup completed")
+		}
+	}()
 
 	dns.HandleFunc(".", handleDNS)
 
