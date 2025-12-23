@@ -217,6 +217,12 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
+	// Determine query type
+	var queryType uint16
+	if len(r.Question) > 0 {
+		queryType = r.Question[0].Qtype
+	}
+
 	// Query primary DNS first
 	resp, err := queryDNS(r, primaryDNS)
 	if err != nil {
@@ -229,6 +235,14 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
+	// If client queries A record, also query AAAA to get complete information
+	var aaaaResp *dns.Msg
+	if queryType == dns.TypeA {
+		aaaaQuery := r.Copy()
+		aaaaQuery.Question[0].Qtype = dns.TypeAAAA
+		aaaaResp, _ = queryDNS(aaaaQuery, primaryDNS)
+	}
+
 	// Check response for IPv6 and IPv4 records
 	var hasIPv6 bool
 	var hasIPv4 bool
@@ -239,7 +253,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	var ipv4Records []dns.RR
 	var ipv6Records []dns.RR
 
-	// Collect all IPv4 and IPv6 records and check against lists
+	// Collect all IPv4 records from original response
 	for _, ans := range resp.Answer {
 		if a, ok := ans.(*dns.A); ok {
 			hasIPv4 = true
@@ -260,9 +274,29 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
+	// If we queried AAAA separately, check those records too
+	if aaaaResp != nil {
+		for _, ans := range aaaaResp.Answer {
+			if aaaa, ok := ans.(*dns.AAAA); ok {
+				hasIPv6 = true
+				ipv6Records = append(ipv6Records, ans)
+				if isInIPNets(aaaa.AAAA, cnIPv6SparkIXNets) {
+					ipv6InSparkIX = true
+				}
+				if isInIPNets(aaaa.AAAA, cnIPv6ISPNets) {
+					ipv6InISP = true
+				}
+			}
+		}
+	}
+
 	// Rule 1: Both IPv4 and IPv6 match SparkIX lists - return full response
 	if ipv4InSparkIX && ipv6InSparkIX {
 		log.Printf("Both IPv4 and IPv6 in SparkIX lists, returning full response")
+		// Merge AAAA records if client only queried A
+		if queryType == dns.TypeA && len(ipv6Records) > 0 {
+			resp.Answer = append(resp.Answer, ipv6Records...)
+		}
 		if cacheKey != "" {
 			cache.Set(cacheKey, resp, getMinTTL(resp))
 		}
@@ -275,7 +309,13 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		log.Printf("Only IPv6 in SparkIX list, returning IPv6 only")
 		filteredResp := new(dns.Msg)
 		filteredResp.SetReply(r)
-		filteredResp.Answer = ipv6Records
+		// Include CNAME records from original response
+		for _, ans := range resp.Answer {
+			if _, ok := ans.(*dns.CNAME); ok {
+				filteredResp.Answer = append(filteredResp.Answer, ans)
+			}
+		}
+		filteredResp.Answer = append(filteredResp.Answer, ipv6Records...)
 		if cacheKey != "" {
 			cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
 		}
@@ -286,13 +326,11 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// Rule 3: Only IPv4 matches SparkIX list - return only IPv4
 	if ipv4InSparkIX && !ipv6InSparkIX {
 		log.Printf("Only IPv4 in SparkIX list, returning IPv4 only")
-		filteredResp := new(dns.Msg)
-		filteredResp.SetReply(r)
-		filteredResp.Answer = ipv4Records
+		// Return original response (which contains IPv4)
 		if cacheKey != "" {
-			cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
+			cache.Set(cacheKey, resp, getMinTTL(resp))
 		}
-		w.WriteMsg(filteredResp)
+		w.WriteMsg(resp)
 		return
 	}
 
@@ -314,7 +352,14 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if ipv6InISP {
 			// Re-query with EDNS and return only IPv6
 			log.Printf("IPv6 in ISP list, re-querying with EDNS client subnet %s", ednsClientSubnet)
-			ednsResp, err := queryDNSWithEDNS(r, primaryDNS, ednsClientSubnet)
+			
+			// Create AAAA query for EDNS request
+			ednsQuery := r.Copy()
+			if queryType == dns.TypeA {
+				ednsQuery.Question[0].Qtype = dns.TypeAAAA
+			}
+			
+			ednsResp, err := queryDNSWithEDNS(ednsQuery, primaryDNS, ednsClientSubnet)
 			if err != nil {
 				log.Printf("EDNS query failed: %v, fallback to %s\n", err, fallbackDNS)
 				resp, _ = queryDNS(r, fallbackDNS)
@@ -328,6 +373,12 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			// Filter response to include only IPv6 records
 			filteredResp := new(dns.Msg)
 			filteredResp.SetReply(r)
+			// Include CNAME records
+			for _, ans := range resp.Answer {
+				if _, ok := ans.(*dns.CNAME); ok {
+					filteredResp.Answer = append(filteredResp.Answer, ans)
+				}
+			}
 			for _, ans := range ednsResp.Answer {
 				if _, ok := ans.(*dns.AAAA); ok {
 					filteredResp.Answer = append(filteredResp.Answer, ans)
