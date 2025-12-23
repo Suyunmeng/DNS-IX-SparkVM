@@ -12,10 +12,9 @@ import (
 )
 
 var (
-	cnIPv6Nets    []*net.IPNet
-	cnIPv6ISPNets []*net.IPNet
-	cnIPv4Nets    []*net.IPNet
-	cnIPv4ISPNets []*net.IPNet
+	cnIPv4SparkIXNets []*net.IPNet
+	cnIPv6SparkIXNets []*net.IPNet
+	cnIPv6ISPNets     []*net.IPNet
 )
 
 // DNS cache entry with expiration
@@ -233,78 +232,74 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// Check response for IPv6 and IPv4 records
 	var hasIPv6 bool
 	var hasIPv4 bool
-	var ipv6InCN bool
+	var ipv4InSparkIX bool
+	var ipv6InSparkIX bool
 	var ipv6InISP bool
-	var ipv4InCN bool
-	var ipv4InISP bool
 
-	// Optimize: check IPv6 first, early exit if found in ISP list
+	var ipv4Records []dns.RR
+	var ipv6Records []dns.RR
+
+	// Collect all IPv4 and IPv6 records and check against lists
 	for _, ans := range resp.Answer {
+		if a, ok := ans.(*dns.A); ok {
+			hasIPv4 = true
+			ipv4Records = append(ipv4Records, ans)
+			if isInIPNets(a.A, cnIPv4SparkIXNets) {
+				ipv4InSparkIX = true
+			}
+		}
 		if aaaa, ok := ans.(*dns.AAAA); ok {
 			hasIPv6 = true
-			if isInIPNets(aaaa.AAAA, cnIPv6Nets) {
-				ipv6InCN = true
-				if isInIPNets(aaaa.AAAA, cnIPv6ISPNets) {
-					ipv6InISP = true
-				}
+			ipv6Records = append(ipv6Records, ans)
+			if isInIPNets(aaaa.AAAA, cnIPv6SparkIXNets) {
+				ipv6InSparkIX = true
+			}
+			if isInIPNets(aaaa.AAAA, cnIPv6ISPNets) {
+				ipv6InISP = true
 			}
 		}
 	}
 
-	// Optimize: only check IPv4 if no IPv6 found
-	if !hasIPv6 {
-		for _, ans := range resp.Answer {
-			if a, ok := ans.(*dns.A); ok {
-				hasIPv4 = true
-				if isInIPNets(a.A, cnIPv4Nets) {
-					ipv4InCN = true
-					if isInIPNets(a.A, cnIPv4ISPNets) {
-						ipv4InISP = true
-					}
-				}
-			}
+	// Rule 1: Both IPv4 and IPv6 match SparkIX lists - return full response
+	if ipv4InSparkIX && ipv6InSparkIX {
+		log.Printf("Both IPv4 and IPv6 in SparkIX lists, returning full response")
+		if cacheKey != "" {
+			cache.Set(cacheKey, resp, getMinTTL(resp))
 		}
+		w.WriteMsg(resp)
+		return
 	}
 
-	// IPv6 processing logic
-	if hasIPv6 {
-		if ipv6InCN {
-			if ipv6InISP {
-				// IPv6 in both cn-ipv6.list and cn-ipv6-isp.list
-				// Re-query with EDNS and return only IPv6
-				log.Printf("IPv6 in CN ISP list, re-querying with EDNS client subnet %s", ednsClientSubnet)
-				ednsResp, err := queryDNSWithEDNS(r, primaryDNS, ednsClientSubnet)
-				if err != nil {
-					log.Printf("EDNS query failed: %v, using original response\n", err)
-					w.WriteMsg(resp)
-					return
-				}
-
-				// Filter response to include only IPv6 records
-				filteredResp := new(dns.Msg)
-				filteredResp.SetReply(r)
-				for _, ans := range ednsResp.Answer {
-					if _, ok := ans.(*dns.AAAA); ok {
-						filteredResp.Answer = append(filteredResp.Answer, ans)
-					}
-				}
-				if cacheKey != "" {
-					cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
-				}
-				w.WriteMsg(filteredResp)
-				return
-			}
-			// IPv6 in cn-ipv6.list but not in cn-ipv6-isp.list
-			// Return full response (IPv4+IPv6)
-			log.Printf("IPv6 in CN list but not ISP list, returning full response")
-			if cacheKey != "" {
-				cache.Set(cacheKey, resp, getMinTTL(resp))
-			}
-			w.WriteMsg(resp)
-			return
+	// Rule 2: Only IPv6 matches SparkIX list - return only IPv6
+	if ipv6InSparkIX && !ipv4InSparkIX {
+		log.Printf("Only IPv6 in SparkIX list, returning IPv6 only")
+		filteredResp := new(dns.Msg)
+		filteredResp.SetReply(r)
+		filteredResp.Answer = ipv6Records
+		if cacheKey != "" {
+			cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
 		}
-		// IPv6 not in cn-ipv6.list, fallback to 1.1.1.1
-		log.Printf("IPv6 not in CN list, fallback to %s", fallbackDNS)
+		w.WriteMsg(filteredResp)
+		return
+	}
+
+	// Rule 3: Only IPv4 matches SparkIX list - return only IPv4
+	if ipv4InSparkIX && !ipv6InSparkIX {
+		log.Printf("Only IPv4 in SparkIX list, returning IPv4 only")
+		filteredResp := new(dns.Msg)
+		filteredResp.SetReply(r)
+		filteredResp.Answer = ipv4Records
+		if cacheKey != "" {
+			cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
+		}
+		w.WriteMsg(filteredResp)
+		return
+	}
+
+	// Rule 4: No match with SparkIX lists
+	// If only IPv4 (no IPv6), fallback to 1.1.1.1
+	if hasIPv4 && !hasIPv6 {
+		log.Printf("Only IPv4 and not in SparkIX list, fallback to %s", fallbackDNS)
 		resp, _ = queryDNS(r, fallbackDNS)
 		if resp != nil && cacheKey != "" {
 			cache.Set(cacheKey, resp, getMinTTL(resp))
@@ -313,12 +308,15 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	// Only IPv4 processing logic
-	if hasIPv4 {
-		if ipv4InCN {
-			if ipv4InISP {
-				// IPv4 in both lists, fallback to 1.1.1.1
-				log.Printf("IPv4 in both CN and ISP lists, fallback to %s", fallbackDNS)
+	// If has IPv6 but not in SparkIX list
+	if hasIPv6 {
+		// Check if IPv6 is in ISP list
+		if ipv6InISP {
+			// Re-query with EDNS and return only IPv6
+			log.Printf("IPv6 in ISP list, re-querying with EDNS client subnet %s", ednsClientSubnet)
+			ednsResp, err := queryDNSWithEDNS(r, primaryDNS, ednsClientSubnet)
+			if err != nil {
+				log.Printf("EDNS query failed: %v, fallback to %s\n", err, fallbackDNS)
 				resp, _ = queryDNS(r, fallbackDNS)
 				if resp != nil && cacheKey != "" {
 					cache.Set(cacheKey, resp, getMinTTL(resp))
@@ -326,15 +324,30 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				w.WriteMsg(resp)
 				return
 			}
-			// IPv4 in cn-ipv4.list but not in cn-ipv4-isp.list
-			// Return original response
-			log.Printf("IPv4 in CN list but not ISP list, returning original response")
-			if cacheKey != "" {
-				cache.Set(cacheKey, resp, getMinTTL(resp))
+
+			// Filter response to include only IPv6 records
+			filteredResp := new(dns.Msg)
+			filteredResp.SetReply(r)
+			for _, ans := range ednsResp.Answer {
+				if _, ok := ans.(*dns.AAAA); ok {
+					filteredResp.Answer = append(filteredResp.Answer, ans)
+				}
 			}
-			w.WriteMsg(resp)
+			if cacheKey != "" {
+				cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
+			}
+			w.WriteMsg(filteredResp)
 			return
 		}
+
+		// IPv6 exists but not in ISP list, fallback to 1.1.1.1
+		log.Printf("IPv6 not in SparkIX or ISP list, fallback to %s", fallbackDNS)
+		resp, _ = queryDNS(r, fallbackDNS)
+		if resp != nil && cacheKey != "" {
+			cache.Set(cacheKey, resp, getMinTTL(resp))
+		}
+		w.WriteMsg(resp)
+		return
 	}
 
 	// Default: return original response
@@ -346,21 +359,17 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 func main() {
 	var err error
-	cnIPv6Nets, err = loadIPList("cn-ipv6.list")
+	cnIPv4SparkIXNets, err = loadIPList("cn-ipv4-sparkix.list")
 	if err != nil {
-		log.Fatalf("failed to load cn-ipv6.list: %v", err)
+		log.Fatalf("failed to load cn-ipv4-sparkix.list: %v", err)
+	}
+	cnIPv6SparkIXNets, err = loadIPList("cn-ipv6-sparkix.list")
+	if err != nil {
+		log.Fatalf("failed to load cn-ipv6-sparkix.list: %v", err)
 	}
 	cnIPv6ISPNets, err = loadIPList("cn-ipv6-isp.list")
 	if err != nil {
 		log.Fatalf("failed to load cn-ipv6-isp.list: %v", err)
-	}
-	cnIPv4Nets, err = loadIPList("cn-ipv4.list")
-	if err != nil {
-		log.Fatalf("failed to load cn-ipv4.list: %v", err)
-	}
-	cnIPv4ISPNets, err = loadIPList("cn-ipv4-isp.list")
-	if err != nil {
-		log.Fatalf("failed to load cn-ipv4-isp.list: %v", err)
 	}
 
 	// Start cache cleanup goroutine

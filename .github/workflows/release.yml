@@ -49,7 +49,7 @@ jobs:
         run: |
           mkdir -p package
           cp ix-sparkvm-dns package/
-          cp cn-ipv4.list cn-ipv4-isp.list cn-ipv6.list cn-ipv6-isp.list package/
+          cp cn-ipv4-sparkix.list cn-ipv6-sparkix.list cn-ipv6-isp.list package/
           cd package
           tar czf ../ix-sparkvm-dns-${{ matrix.name }}.tar.gz *
       
