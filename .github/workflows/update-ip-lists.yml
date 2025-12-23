@@ -25,12 +25,8 @@ jobs:
       
       - name: Download and merge IPv4 SparkIX lists
         run: |
-          echo "# Generated at $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > cn-ipv4-sparkix.list
-          echo "# Sources: aliyuncn, baiducn, tencentcn" >> cn-ipv4-sparkix.list
-          echo "" >> cn-ipv4-sparkix.list
-          
           # Download and append each list
-          curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/aliyuncn.txt >> cn-ipv4-sparkix.list
+          curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/aliyuncn.txt > cn-ipv4-sparkix.list
           curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/baiducn.txt >> cn-ipv4-sparkix.list
           curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/tencentcn.txt >> cn-ipv4-sparkix.list
           
@@ -41,12 +37,8 @@ jobs:
       
       - name: Download and merge IPv6 SparkIX lists
         run: |
-          echo "# Generated at $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > cn-ipv6-sparkix.list
-          echo "# Sources: aliyuncn6, baiducn6, tencentcn6" >> cn-ipv6-sparkix.list
-          echo "" >> cn-ipv6-sparkix.list
-          
           # Download and append each list
-          curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/aliyuncn6.txt >> cn-ipv6-sparkix.list
+          curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/aliyuncn6.txt > cn-ipv6-sparkix.list
           curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/baiducn6.txt >> cn-ipv6-sparkix.list
           curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/tencentcn6.txt >> cn-ipv6-sparkix.list
           
@@ -57,12 +49,8 @@ jobs:
       
       - name: Download and merge IPv6 ISP lists
         run: |
-          echo "# Generated at $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > cn-ipv6-isp.list
-          echo "# Sources: cernet6, chinanet6, cmcc6, cstnet6, drpeng6, unicom6" >> cn-ipv6-isp.list
-          echo "" >> cn-ipv6-isp.list
-          
           # Download and append each list
-          curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/cernet6.txt >> cn-ipv6-isp.list
+          curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/cernet6.txt > cn-ipv6-isp.list
           curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/chinanet6.txt >> cn-ipv6-isp.list
           curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/cmcc6.txt >> cn-ipv6-isp.list
           curl -fsSL https://raw.githubusercontent.com/Suyunmeng/china-operator-ip/refs/heads/ip-lists/cstnet6.txt >> cn-ipv6-isp.list
