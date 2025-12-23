@@ -54,14 +54,6 @@ func isInIPNets(ip net.IP, nets []*net.IPNet) bool {
 	return false
 }
 
-// 判断 IPv6 是否在允许网段
-func isAllowedIPv6(ip net.IP) bool {
-	if ip == nil || ip.To16() == nil || ip.To4() != nil {
-		return false
-	}
-	return isInIPNets(ip, cnIPv6Nets)
-}
-
 // 查询上游 DNS
 func queryDNS(r *dns.Msg, server string) (*dns.Msg, error) {
 	c := &dns.Client{
