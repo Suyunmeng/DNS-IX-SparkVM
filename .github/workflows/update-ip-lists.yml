@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '0 0 * * *'  # Run daily at 00:00 UTC
   workflow_dispatch:  # Allow manual trigger
+    inputs:
+      force:
+        description: 'Force update and commit even if no changes detected'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -71,7 +77,12 @@ jobs:
       - name: Check for changes
         id: check_changes
         run: |
-          git diff --quiet cn-ipv4-sparkix.list cn-ipv6-sparkix.list cn-ipv6-isp.list || echo "changed=true" >> $GITHUB_OUTPUT
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "Force update enabled, skipping change detection"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            git diff --quiet cn-ipv4-sparkix.list cn-ipv6-sparkix.list cn-ipv6-isp.list || echo "changed=true" >> $GITHUB_OUTPUT
+          fi
       
       - name: Commit and push if changed
         if: steps.check_changes.outputs.changed == 'true'
@@ -79,7 +90,13 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add cn-ipv4-sparkix.list cn-ipv6-sparkix.list cn-ipv6-isp.list
-          git commit -m "chore(lists): update IP lists $(date -u '+%Y-%m-%d')"
+          
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            git commit -m "chore(lists): force update IP lists $(date -u '+%Y-%m-%d')" || echo "No files to commit"
+          else
+            git commit -m "chore(lists): update IP lists $(date -u '+%Y-%m-%d')"
+          fi
+          
           git push
       
       - name: No changes detected
