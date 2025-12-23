@@ -236,6 +236,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 	var ipv4InCN bool
 	var ipv4InISP bool
 
+	// Optimize: check IPv6 first, early exit if found in ISP list
 	for _, ans := range resp.Answer {
 		if aaaa, ok := ans.(*dns.AAAA); ok {
 			hasIPv6 = true
@@ -243,16 +244,21 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				ipv6InCN = true
 				if isInIPNets(aaaa.AAAA, cnIPv6ISPNets) {
 					ipv6InISP = true
-					break
 				}
 			}
 		}
-		if a, ok := ans.(*dns.A); ok {
-			hasIPv4 = true
-			if isInIPNets(a.A, cnIPv4Nets) {
-				ipv4InCN = true
-				if isInIPNets(a.A, cnIPv4ISPNets) {
-					ipv4InISP = true
+	}
+
+	// Optimize: only check IPv4 if no IPv6 found
+	if !hasIPv6 {
+		for _, ans := range resp.Answer {
+			if a, ok := ans.(*dns.A); ok {
+				hasIPv4 = true
+				if isInIPNets(a.A, cnIPv4Nets) {
+					ipv4InCN = true
+					if isInIPNets(a.A, cnIPv4ISPNets) {
+						ipv4InISP = true
+					}
 				}
 			}
 		}
