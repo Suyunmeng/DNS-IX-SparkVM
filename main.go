@@ -375,14 +375,25 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 			
 			ednsResp, err := queryDNSWithEDNS(ednsQuery, primaryDNS, ednsClientSubnet)
-			if err != nil {
-				log.Printf("EDNS query failed: %v, fallback to %s\n", err, fallbackDNS)
-				resp, _ = queryDNS(r, fallbackDNS)
-				if resp != nil && cacheKey != "" {
-					cache.Set(cacheKey, resp, getMinTTL(resp))
+			
+			// Use EDNS response if successful and contains IPv6
+			var finalIPv6Records []dns.RR
+			if err == nil && ednsResp != nil {
+				for _, ans := range ednsResp.Answer {
+					if _, ok := ans.(*dns.AAAA); ok {
+						finalIPv6Records = append(finalIPv6Records, ans)
+					}
 				}
-				w.WriteMsg(resp)
-				return
+			}
+			
+			// If EDNS query failed or returned no IPv6, use original IPv6 records
+			if len(finalIPv6Records) == 0 {
+				if err != nil {
+					log.Printf("EDNS query failed: %v, using original IPv6 records", err)
+				} else {
+					log.Printf("EDNS query returned no IPv6 records, using original IPv6 records")
+				}
+				finalIPv6Records = ipv6Records
 			}
 
 			// Filter response to include only IPv6 records
@@ -394,11 +405,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 					filteredResp.Answer = append(filteredResp.Answer, ans)
 				}
 			}
-			for _, ans := range ednsResp.Answer {
-				if _, ok := ans.(*dns.AAAA); ok {
-					filteredResp.Answer = append(filteredResp.Answer, ans)
-				}
-			}
+			filteredResp.Answer = append(filteredResp.Answer, finalIPv6Records...)
 			if cacheKey != "" {
 				cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
 			}
