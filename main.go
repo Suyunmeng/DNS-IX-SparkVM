@@ -136,7 +136,7 @@ func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg,
 	// Create a copy to avoid modifying the original request
 	req := r.Copy()
 
-	// Parse the client subnet IP
+	// Parse the client subnet IP with CIDR notation
 	ip := net.ParseIP(clientSubnet)
 	if ip == nil {
 		return nil, dns.ErrId
@@ -147,10 +147,10 @@ func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg,
 	var sourceNetmask uint8
 	if ip.To4() != nil {
 		family = 1 // IPv4
-		sourceNetmask = 32
+		sourceNetmask = 24 // Use /24 for IPv4
 	} else {
 		family = 2 // IPv6
-		sourceNetmask = 128
+		sourceNetmask = 64 // Use /64 for IPv6
 	}
 
 	// Create EDNS0 subnet option
