@@ -135,8 +135,11 @@ func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg,
 
 	// Create a copy to avoid modifying the original request
 	req := r.Copy()
+	
+	// Remove any existing EDNS0 records
+	req.Extra = nil
 
-	// Parse the client subnet IP with CIDR notation
+	// Parse the client subnet IP
 	ip := net.ParseIP(clientSubnet)
 	if ip == nil {
 		return nil, dns.ErrId
@@ -154,13 +157,6 @@ func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg,
 	}
 
 	// Create EDNS0 subnet option
-	opt := &dns.OPT{
-		Hdr: dns.RR_Header{
-			Name:   ".",
-			Rrtype: dns.TypeOPT,
-			Class:  4096, // UDP payload size
-		},
-	}
 	e := &dns.EDNS0_SUBNET{
 		Code:          dns.EDNS0SUBNET,
 		Family:        family,
@@ -168,8 +164,14 @@ func queryDNSWithEDNS(r *dns.Msg, server string, clientSubnet string) (*dns.Msg,
 		SourceScope:   0,
 		Address:       ip,
 	}
-	opt.Option = append(opt.Option, e)
-	req.Extra = append(req.Extra, opt)
+	
+	// Set EDNS0 using the SetEdns0 method
+	req.SetEdns0(4096, false)
+	
+	// Add the subnet option to the OPT record
+	if opt := req.IsEdns0(); opt != nil {
+		opt.Option = append(opt.Option, e)
+	}
 
 	// Retry mechanism: try up to 3 times
 	var resp *dns.Msg
