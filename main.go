@@ -267,6 +267,8 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	var ipv4Records []dns.RR
 	var ipv6Records []dns.RR
+	var ipv4SparkIXRecords []dns.RR
+	var ipv6SparkIXRecords []dns.RR
 
 	// Collect all IPv4 records from original response
 	for _, ans := range resp.Answer {
@@ -275,6 +277,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			ipv4Records = append(ipv4Records, ans)
 			if isInIPNets(a.A, cnIPv4SparkIXNets) {
 				ipv4InSparkIX = true
+				ipv4SparkIXRecords = append(ipv4SparkIXRecords, ans)
 			}
 		}
 		if aaaa, ok := ans.(*dns.AAAA); ok {
@@ -282,6 +285,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 			ipv6Records = append(ipv6Records, ans)
 			if isInIPNets(aaaa.AAAA, cnIPv6SparkIXNets) {
 				ipv6InSparkIX = true
+				ipv6SparkIXRecords = append(ipv6SparkIXRecords, ans)
 			}
 			if isInIPNets(aaaa.AAAA, cnIPv6ISPNets) {
 				ipv6InISP = true
@@ -297,6 +301,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				ipv6Records = append(ipv6Records, ans)
 				if isInIPNets(aaaa.AAAA, cnIPv6SparkIXNets) {
 					ipv6InSparkIX = true
+					ipv6SparkIXRecords = append(ipv6SparkIXRecords, ans)
 				}
 				if isInIPNets(aaaa.AAAA, cnIPv6ISPNets) {
 					ipv6InISP = true
@@ -307,15 +312,22 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// Rule 1: Both IPv4 and IPv6 match SparkIX lists - return full response
 	if ipv4InSparkIX && ipv6InSparkIX {
-		log.Printf("Both IPv4 and IPv6 in SparkIX lists, returning full response")
-		// Merge AAAA records if client only queried A
-		if queryType == dns.TypeA && len(ipv6Records) > 0 {
-			resp.Answer = append(resp.Answer, ipv6Records...)
+		log.Printf("Both IPv4 and IPv6 in SparkIX lists, returning SparkIX IPs only")
+		filteredResp := new(dns.Msg)
+		filteredResp.SetReply(r)
+		// Include CNAME records
+		for _, ans := range resp.Answer {
+			if _, ok := ans.(*dns.CNAME); ok {
+				filteredResp.Answer = append(filteredResp.Answer, ans)
+			}
 		}
+		// Add only SparkIX IPv4 and IPv6 records
+		filteredResp.Answer = append(filteredResp.Answer, ipv4SparkIXRecords...)
+		filteredResp.Answer = append(filteredResp.Answer, ipv6SparkIXRecords...)
 		if cacheKey != "" {
-			cache.Set(cacheKey, resp, getMinTTL(resp))
+			cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
 		}
-		w.WriteMsg(resp)
+		w.WriteMsg(filteredResp)
 		return
 	}
 
@@ -330,7 +342,7 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				filteredResp.Answer = append(filteredResp.Answer, ans)
 			}
 		}
-		filteredResp.Answer = append(filteredResp.Answer, ipv6Records...)
+		filteredResp.Answer = append(filteredResp.Answer, ipv6SparkIXRecords...)
 		if cacheKey != "" {
 			cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
 		}
@@ -338,14 +350,22 @@ func handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	// Rule 3: Only IPv4 matches SparkIX list - return only IPv4
+	// Rule 3: Only IPv4 matches SparkIX list - return only IPv4 in SparkIX
 	if ipv4InSparkIX && !ipv6InSparkIX {
-		log.Printf("Only IPv4 in SparkIX list, returning IPv4 only")
-		// Return original response (which contains IPv4)
-		if cacheKey != "" {
-			cache.Set(cacheKey, resp, getMinTTL(resp))
+		log.Printf("Only IPv4 in SparkIX list, returning SparkIX IPv4 only")
+		filteredResp := new(dns.Msg)
+		filteredResp.SetReply(r)
+		// Include CNAME records
+		for _, ans := range resp.Answer {
+			if _, ok := ans.(*dns.CNAME); ok {
+				filteredResp.Answer = append(filteredResp.Answer, ans)
+			}
 		}
-		w.WriteMsg(resp)
+		filteredResp.Answer = append(filteredResp.Answer, ipv4SparkIXRecords...)
+		if cacheKey != "" {
+			cache.Set(cacheKey, filteredResp, getMinTTL(filteredResp))
+		}
+		w.WriteMsg(filteredResp)
 		return
 	}
 
