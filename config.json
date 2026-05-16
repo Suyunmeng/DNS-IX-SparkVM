@@ -1,0 +1,13 @@
+{
+	"interface-1-ipv4": true,
+	"interface-1-ipv6": false,
+	"interface-2-ipv4": false,
+	"interface-2-ipv6": true,
+	"interface-3-ipv4": true,
+	"interface-3-ipv6": true,
+	"interface-1-ecsip": "",
+	"interface-2-ecsip": "",
+	"interface-3-ecsip": "",
+	"interface-1-ips": "cn-ipv4-sparkix.list",
+	"interface-2-ips": "cn-ipv6-sparkix.list"
+}
