@@ -708,10 +708,10 @@ func main() {
 	// UDP
 	go func() {
 		server := &dns.Server{
-			Addr: ":5353",
+			Addr: "127.0.0.21:53",
 			Net:  "udp",
 		}
-		log.Println("DNS server started on UDP :5353")
+		log.Println("DNS server started on UDP 127.0.0.21:53")
 		if err := server.ListenAndServe(); err != nil {
 			log.Fatalf("UDP server failed: %v", err)
 		}
@@ -719,10 +719,10 @@ func main() {
 
 	// TCP
 	server := &dns.Server{
-		Addr: ":5353",
+		Addr: "127.0.0.21:53",
 		Net:  "tcp",
 	}
-	log.Println("DNS server started on TCP :5353")
+	log.Println("DNS server started on TCP 127.0.0.21:53")
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("TCP server failed: %v", err)
 	}
